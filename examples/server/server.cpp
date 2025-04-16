@@ -3154,6 +3154,27 @@ struct server_context {
 
                     SLT_INF(slot, "prompt processing progress, n_past = %d, n_tokens = %d, progress = %f\n", slot.n_past, batch.n_tokens, (float) slot.n_prompt_tokens_processed / slot.n_prompt_tokens);
 
+                    // Progress bar for prompt evaluation
+                    if (slot.n_prompt_tokens > 1) {
+                        fprintf(stderr, "\rPrompt processing: %3.0f%% [", (float) slot.n_prompt_tokens_processed / slot.n_prompt_tokens * 100.0);
+                        int bar_width = 30;
+                        int position = bar_width * slot.n_prompt_tokens_processed / slot.n_prompt_tokens;
+                        for (int i = 0; i < bar_width; ++i) {
+                            if (i < position) fprintf(stderr, "=");
+                            else if (i == position) fprintf(stderr, ">");
+                            else fprintf(stderr, " ");
+                        }
+
+                        fprintf(stderr, "] %d/%d tokens", slot.n_prompt_tokens_processed, slot.n_prompt_tokens);
+
+                        // If we're done, clear the line with more spaces to handle wider outputs
+                        if (slot.n_prompt_tokens_processed == slot.n_prompt_tokens) {
+                            fprintf(stderr, "\r%*s\r", 120, ""); // Clear with 120 spaces to handle wider terminals
+                        }
+
+                        fflush(stderr);
+                    }
+
                     // entire prompt has been processed
                     if (slot.n_past == slot.n_prompt_tokens) {
                         slot.state = SLOT_STATE_DONE_PROMPT;
