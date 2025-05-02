@@ -206,7 +206,7 @@ struct common_sampler * common_sampler_init(const struct llama_model * model, co
                     break;
                 case COMMON_SAMPLER_TYPE_TOP_P:
                     llama_sampler_chain_add(result->chain, llama_sampler_init_top_p       (params.top_p, params.min_keep));
-                    break; 
+                    break;
                 case COMMON_SAMPLER_TYPE_TOP_N_SIGMA:
                     llama_sampler_chain_add(result->chain, llama_sampler_init_top_n_sigma (params.top_n_sigma));
                     break;
