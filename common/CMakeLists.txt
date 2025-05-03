@@ -39,7 +39,9 @@ add_custom_command(
     COMMENT "Generating build details from Git"
     COMMAND ${CMAKE_COMMAND} -DMSVC=${MSVC} -DCMAKE_C_COMPILER_VERSION=${CMAKE_C_COMPILER_VERSION}
             -DCMAKE_C_COMPILER_ID=${CMAKE_C_COMPILER_ID} -DCMAKE_VS_PLATFORM_NAME=${CMAKE_VS_PLATFORM_NAME}
-            -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER} -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/build-info-gen-cpp.cmake"
+            -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
+            -DCMAKE_SYSTEM_NAME=${CMAKE_SYSTEM_NAME} -DCMAKE_SYSTEM_PROCESSOR=${CMAKE_SYSTEM_PROCESSOR}
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/build-info-gen-cpp.cmake"
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
     DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/build-info.cpp.in" ${GIT_INDEX}
     VERBATIM
@@ -57,8 +59,7 @@ add_library(${TARGET} STATIC
     arg.h
     base64.hpp
     chat.cpp
-    chat.hpp
-    chat-template.hpp
+    chat.h
     common.cpp
     common.h
     console.cpp
@@ -68,7 +69,8 @@ add_library(${TARGET} STATIC
     llguidance.cpp
     log.cpp
     log.h
-    minja.hpp
+    minja/chat-template.hpp
+    minja/minja.hpp
     ngram-cache.cpp
     ngram-cache.h
     sampling.cpp
@@ -85,7 +87,10 @@ set(LLAMA_COMMON_EXTRA_LIBS build_info)
 
 # Use curl to download model url
 if (LLAMA_CURL)
-    find_package(CURL REQUIRED)
+    find_package(CURL)
+    if (NOT CURL_FOUND)
+        message(FATAL_ERROR "Could NOT find CURL. Hint: to disable this feature, set -DLLAMA_CURL=OFF")
+    endif()
     target_compile_definitions(${TARGET} PUBLIC LLAMA_USE_CURL)
     include_directories(${CURL_INCLUDE_DIRS})
     find_library(CURL_LIBRARY curl REQUIRED)
@@ -114,8 +119,8 @@ if (LLAMA_LLGUIDANCE)
 
     ExternalProject_Add(llguidance_ext
         GIT_REPOSITORY https://github.com/guidance-ai/llguidance
-        # v0.6.12:
-        GIT_TAG ced1c9023d47ec194fa977932d35ce65c2ebfc09
+        # v0.7.10:
+        GIT_TAG 0309d2a6bf40abda35344a362edc71e06d5009f8
         PREFIX ${CMAKE_BINARY_DIR}/llguidance
         SOURCE_DIR ${LLGUIDANCE_SRC}
         BUILD_IN_SOURCE TRUE

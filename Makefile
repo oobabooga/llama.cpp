@@ -680,6 +680,10 @@ ifdef GGML_CUDA_CCBIN
 	MK_NVCCFLAGS += -ccbin $(GGML_CUDA_CCBIN)
 endif # GGML_CUDA_CCBIN
 
+ifdef GGML_CUDA_NO_FA
+	MK_NVCCFLAGS += -DGGML_CUDA_NO_FA
+endif # GGML_CUDA_NO_FA
+
 ifdef GGML_CUDA_FA_ALL_QUANTS
 	MK_NVCCFLAGS += -DGGML_CUDA_FA_ALL_QUANTS
 endif # GGML_CUDA_FA_ALL_QUANTS
@@ -776,10 +780,6 @@ ifdef GGML_HIP
 
 	MK_CPPFLAGS += -DGGML_USE_HIP -DGGML_USE_CUDA
 
-ifdef GGML_HIP_UMA
-	MK_CPPFLAGS += -DGGML_HIP_UMA
-endif # GGML_HIP_UMA
-
 	MK_LDFLAGS += -L$(ROCM_PATH)/lib -Wl,-rpath=$(ROCM_PATH)/lib
 	MK_LDFLAGS += -L$(ROCM_PATH)/lib64 -Wl,-rpath=$(ROCM_PATH)/lib64
 	MK_LDFLAGS += -lhipblas -lamdhip64 -lrocblas
@@ -799,6 +799,10 @@ endif # GGML_CUDA_FORCE_CUBLAS
 ifdef GGML_CUDA_NO_PEER_COPY
 	HIPFLAGS += -DGGML_CUDA_NO_PEER_COPY
 endif # GGML_CUDA_NO_PEER_COPY
+
+ifdef GGML_CUDA_NO_FA
+	HIPFLAGS += -DGGML_CUDA_NO_FA
+endif # GGML_CUDA_NO_FA
 
 	OBJ_GGML_EXT += ggml/src/ggml-cuda/ggml-cuda.o
 	OBJ_GGML_EXT += $(patsubst %.cu,%.o,$(wildcard ggml/src/ggml-cuda/*.cu))
@@ -828,7 +832,7 @@ ifdef GGML_MUSA
 	else
 		MUSA_PATH ?= /opt/musa
 	endif
-	MUSA_ARCHITECTURES ?= 21;22
+	MUSA_ARCHITECTURES ?= 21;22;31
 
 	MK_CPPFLAGS += -DGGML_USE_MUSA -DGGML_USE_CUDA
 	MK_LDFLAGS += -L$(MUSA_PATH)/lib -Wl,-rpath=$(MUSA_PATH)/lib
@@ -847,7 +851,7 @@ ifdef GGML_MUSA
 	CXX := $(MUSA_PATH)/bin/clang++
 	MCC := $(CCACHE) $(MUSA_PATH)/bin/mcc
 
-	MUSAFLAGS  = -x musa -mtgpu
+	MUSAFLAGS  = -fsigned-char -x musa -mtgpu
 	MUSAFLAGS += $(foreach arch,$(subst ;, ,$(MUSA_ARCHITECTURES)),--cuda-gpu-arch=mp_$(arch))
 
 ifdef GGML_CUDA_FORCE_MMQ
@@ -875,6 +879,10 @@ endif # GGML_CUDA_PEER_MAX_BATCH_SIZE
 ifdef GGML_CUDA_NO_PEER_COPY
 	MUSAFLAGS += -DGGML_CUDA_NO_PEER_COPY
 endif # GGML_CUDA_NO_PEER_COPY
+
+ifdef GGML_CUDA_NO_FA
+	MUSAFLAGS += -DGGML_CUDA_NO_FA
+endif # GGML_CUDA_NO_FA
 
 ifdef GGML_CUDA_FA_ALL_QUANTS
 	MUSAFLAGS += -DGGML_CUDA_FA_ALL_QUANTS
@@ -1148,10 +1156,10 @@ $(LIB_COMMON_S): $(OBJ_COMMON)
 
 # Clean generated server assets
 clean-server-assets:
-	find examples/server -type f -name "*.js.hpp"   -delete
-	find examples/server -type f -name "*.mjs.hpp"  -delete
-	find examples/server -type f -name "*.css.hpp"  -delete
-	find examples/server -type f -name "*.html.hpp" -delete
+	find tools/server -type f -name "*.js.hpp"   -delete
+	find tools/server -type f -name "*.mjs.hpp"  -delete
+	find tools/server -type f -name "*.css.hpp"  -delete
+	find tools/server -type f -name "*.html.hpp" -delete
 
 # Clean rule
 clean: clean-server-assets
@@ -1171,7 +1179,7 @@ clean: clean-server-assets
 # Helper function that replaces .c, .cpp, and .cu file endings with .o:
 GET_OBJ_FILE = $(patsubst %.c,%.o,$(patsubst %.cpp,%.o,$(patsubst %.cu,%.o,$(1))))
 
-llama-cli: examples/main/main.cpp \
+llama-cli: tools/main/main.cpp \
 	$(OBJ_ALL)
 	$(CXX) $(CXXFLAGS) -c $< -o $(call GET_OBJ_FILE, $<)
 	$(CXX) $(CXXFLAGS) $(filter-out %.h $<,$^) $(call GET_OBJ_FILE, $<) -o $@ $(LDFLAGS)
@@ -1184,7 +1192,7 @@ llama-infill: examples/infill/infill.cpp \
 	$(CXX) $(CXXFLAGS) -c $< -o $(call GET_OBJ_FILE, $<)
 	$(CXX) $(CXXFLAGS) $(filter-out %.h $<,$^) $(call GET_OBJ_FILE, $<) -o $@ $(LDFLAGS)
 
-llama-run: examples/run/run.cpp \
+llama-run: tools/run/run.cpp \
 	$(OBJ_ALL)
 	$(CXX) $(CXXFLAGS) -c $< -o $(call GET_OBJ_FILE, $<)
 	$(CXX) $(CXXFLAGS) $(filter-out %.h $<,$^) $(call GET_OBJ_FILE, $<) -o $@ $(LDFLAGS)
@@ -1199,7 +1207,7 @@ llama-simple-chat: examples/simple-chat/simple-chat.cpp \
 	$(CXX) $(CXXFLAGS) -c $< -o $(call GET_OBJ_FILE, $<)
 	$(CXX) $(CXXFLAGS) $(filter-out %.h $<,$^) $(call GET_OBJ_FILE, $<) -o $@ $(LDFLAGS)
 
-llama-tokenize: examples/tokenize/tokenize.cpp \
+llama-tokenize: tools/tokenize/tokenize.cpp \
 	$(OBJ_ALL)
 	$(CXX) $(CXXFLAGS) -c $< -o $(call GET_OBJ_FILE, $<)
 	$(CXX) $(CXXFLAGS) $(filter-out %.h $<,$^) $(call GET_OBJ_FILE, $<) -o $@ $(LDFLAGS)
@@ -1209,27 +1217,27 @@ llama-batched: examples/batched/batched.cpp \
 	$(CXX) $(CXXFLAGS) -c $< -o $(call GET_OBJ_FILE, $<)
 	$(CXX) $(CXXFLAGS) $(filter-out %.h $<,$^) $(call GET_OBJ_FILE, $<) -o $@ $(LDFLAGS)
 
-llama-batched-bench: examples/batched-bench/batched-bench.cpp \
+llama-batched-bench: tools/batched-bench/batched-bench.cpp \
 	$(OBJ_ALL)
 	$(CXX) $(CXXFLAGS) -c $< -o $(call GET_OBJ_FILE, $<)
 	$(CXX) $(CXXFLAGS) $(filter-out %.h $<,$^) $(call GET_OBJ_FILE, $<) -o $@ $(LDFLAGS)
 
-llama-quantize: examples/quantize/quantize.cpp \
+llama-quantize: tools/quantize/quantize.cpp \
 	$(OBJ_ALL)
 	$(CXX) $(CXXFLAGS) -c $< -o $(call GET_OBJ_FILE, $<)
 	$(CXX) $(CXXFLAGS) $(filter-out %.h $<,$^) $(call GET_OBJ_FILE, $<) -o $@ $(LDFLAGS)
 
-llama-quantize-stats: examples/quantize-stats/quantize-stats.cpp \
+llama-quantize-stats: tools/quantize-stats/quantize-stats.cpp \
 	$(OBJ_ALL)
 	$(CXX) $(CXXFLAGS) -c $< -o $(call GET_OBJ_FILE, $<)
 	$(CXX) $(CXXFLAGS) $(filter-out %.h $<,$^) $(call GET_OBJ_FILE, $<) -o $@ $(LDFLAGS)
 
-llama-perplexity: examples/perplexity/perplexity.cpp \
+llama-perplexity: tools/perplexity/perplexity.cpp \
 	$(OBJ_ALL)
 	$(CXX) $(CXXFLAGS) -c $< -o $(call GET_OBJ_FILE, $<)
 	$(CXX) $(CXXFLAGS) $(filter-out %.h $<,$^) $(call GET_OBJ_FILE, $<) -o $@ $(LDFLAGS)
 
-llama-imatrix: examples/imatrix/imatrix.cpp \
+llama-imatrix: tools/imatrix/imatrix.cpp \
 	$(OBJ_ALL)
 	$(CXX) $(CXXFLAGS) -c $< -o $(call GET_OBJ_FILE, $<)
 	$(CXX) $(CXXFLAGS) $(filter-out %.h $<,$^) $(call GET_OBJ_FILE, $<) -o $@ $(LDFLAGS)
@@ -1271,7 +1279,7 @@ llama-gguf-hash: examples/gguf-hash/gguf-hash.cpp examples/gguf-hash/deps/sha1/s
 	$(CXX) $(CXXFLAGS) -Iexamples/gguf-hash/deps -c $< -o $(call GET_OBJ_FILE, $<)
 	$(CXX) $(CXXFLAGS) $(filter-out %.h $<,$^) $(call GET_OBJ_FILE, $<) -o $@ $(LDFLAGS)
 
-llama-gguf-split: examples/gguf-split/gguf-split.cpp \
+llama-gguf-split: tools/gguf-split/gguf-split.cpp \
 	$(OBJ_ALL)
 	$(CXX) $(CXXFLAGS) -c $< -o $(call GET_OBJ_FILE, $<)
 	$(CXX) $(CXXFLAGS) $(filter-out %.h $<,$^) $(call GET_OBJ_FILE, $<) -o $@ $(LDFLAGS)
@@ -1281,7 +1289,7 @@ llama-eval-callback: examples/eval-callback/eval-callback.cpp \
 	$(CXX) $(CXXFLAGS) -c $< -o $(call GET_OBJ_FILE, $<)
 	$(CXX) $(CXXFLAGS) $(filter-out %.h $<,$^) $(call GET_OBJ_FILE, $<) -o $@ $(LDFLAGS)
 
-llama-cvector-generator: examples/cvector-generator/cvector-generator.cpp \
+llama-cvector-generator: tools/cvector-generator/cvector-generator.cpp \
 	$(OBJ_ALL)
 	$(CXX) $(CXXFLAGS) -c $< -o $(call GET_OBJ_FILE, $<)
 	$(CXX) $(CXXFLAGS) $(filter-out %.h $<,$^) $(call GET_OBJ_FILE, $<) -o $@ $(LDFLAGS)
@@ -1291,12 +1299,12 @@ llama-convert-llama2c-to-ggml: examples/convert-llama2c-to-ggml/convert-llama2c-
 	$(CXX) $(CXXFLAGS) -c $< -o $(call GET_OBJ_FILE, $<)
 	$(CXX) $(CXXFLAGS) $(filter-out %.h $<,$^) $(call GET_OBJ_FILE, $<) -o $@ $(LDFLAGS)
 
-llama-bench: examples/llama-bench/llama-bench.cpp \
+llama-bench: tools/llama-bench/llama-bench.cpp \
 	$(OBJ_ALL)
 	$(CXX) $(CXXFLAGS) -c $< -o $(call GET_OBJ_FILE, $<)
 	$(CXX) $(CXXFLAGS) $(filter-out %.h $<,$^) $(call GET_OBJ_FILE, $<) -o $@ $(LDFLAGS)
 
-llama-export-lora: examples/export-lora/export-lora.cpp \
+llama-export-lora: tools/export-lora/export-lora.cpp \
 	$(OBJ_ALL)
 	$(CXX) $(CXXFLAGS) -c $< -o $(call GET_OBJ_FILE, $<)
 	$(CXX) $(CXXFLAGS) $(filter-out %.h $<,$^) $(call GET_OBJ_FILE, $<) -o $@ $(LDFLAGS)
@@ -1352,28 +1360,28 @@ llama-gbnf-validator: examples/gbnf-validator/gbnf-validator.cpp \
 	$(CXX) $(CXXFLAGS) $(filter-out %.h $<,$^) $(call GET_OBJ_FILE, $<) -o $@ $(LDFLAGS)
 
 ifdef GGML_RPC
-rpc-server: examples/rpc/rpc-server.cpp \
+rpc-server: tools/rpc/rpc-server.cpp \
 	$(OBJ_GGML)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDFLAGS)
 endif # GGML_RPC
 
 llama-server: \
-	examples/server/server.cpp \
-	examples/server/utils.hpp \
-	examples/server/httplib.h \
-	examples/server/index.html.hpp \
-	examples/server/loading.html.hpp \
+	tools/server/server.cpp \
+	tools/server/utils.hpp \
+	tools/server/httplib.h \
+	tools/server/index.html.hpp \
+	tools/server/loading.html.hpp \
 	common/chat.cpp \
-	common/chat.hpp \
+	common/chat.h \
 	common/chat-template.hpp \
 	common/json.hpp \
 	common/minja.hpp \
 	$(OBJ_ALL)
 	$(CXX) $(CXXFLAGS) -c $< -o $(call GET_OBJ_FILE, $<)
-	$(CXX) $(CXXFLAGS) $(filter-out %.h %.hpp $<,$^) -Iexamples/server $(call GET_OBJ_FILE, $<) -o $@ $(LDFLAGS) $(LWINSOCK2)
+	$(CXX) $(CXXFLAGS) $(filter-out %.h %.hpp $<,$^) -Itools/server $(call GET_OBJ_FILE, $<) -o $@ $(LDFLAGS) $(LWINSOCK2)
 
-# Portable equivalent of `cd examples/server/public && xxd -i $(notdir $<) ../$(notdir $<).hpp`:
-examples/server/%.hpp: examples/server/public/% FORCE Makefile
+# Portable equivalent of `cd tools/server/public && xxd -i $(notdir $<) ../$(notdir $<).hpp`:
+tools/server/%.hpp: tools/server/public/% FORCE Makefile
 	@( export NAME=$(subst .,_,$(subst -,_,$(notdir $<))) && \
 		echo "unsigned char $${NAME}[] = {" && \
 		cat $< | od -v -t x1 -An | sed -E 's/([0-9a-fA-F]+)/0x\1, /g' && \
@@ -1386,36 +1394,36 @@ llama-gen-docs: examples/gen-docs/gen-docs.cpp \
 	$(CXX) $(CXXFLAGS) -c $< -o $(call GET_OBJ_FILE, $<)
 	$(CXX) $(CXXFLAGS) $(filter-out %.h $<,$^) $(call GET_OBJ_FILE, $<) -o $@ $(LDFLAGS)
 
-libllava.a: examples/llava/llava.cpp \
-	examples/llava/llava.h \
-	examples/llava/clip.cpp \
-	examples/llava/clip.h \
+libllava.a: tools/llava/llava.cpp \
+	tools/llava/llava.h \
+	tools/llava/clip.cpp \
+	tools/llava/clip.h \
 	common/stb_image.h \
 	common/base64.hpp \
 	$(OBJ_ALL)
 	$(CXX) $(CXXFLAGS) -static -fPIC -c $< -o $@ -Wno-cast-qual
 
-llama-llava-cli: examples/llava/llava-cli.cpp \
-	examples/llava/llava.cpp \
-	examples/llava/llava.h \
-	examples/llava/clip.cpp \
-	examples/llava/clip.h \
+llama-llava-cli: tools/llava/llava-cli.cpp \
+	tools/llava/llava.cpp \
+	tools/llava/llava.h \
+	tools/llava/clip.cpp \
+	tools/llava/clip.h \
 	$(OBJ_ALL)
 	$(CXX) $(CXXFLAGS) $< $(filter-out %.h $<,$^) -o $@ $(LDFLAGS) -Wno-cast-qual
 
-llama-minicpmv-cli: examples/llava/minicpmv-cli.cpp \
-	examples/llava/llava.cpp \
-	examples/llava/llava.h \
-	examples/llava/clip.cpp \
-	examples/llava/clip.h \
+llama-minicpmv-cli: tools/llava/minicpmv-cli.cpp \
+	tools/llava/llava.cpp \
+	tools/llava/llava.h \
+	tools/llava/clip.cpp \
+	tools/llava/clip.h \
 	$(OBJ_ALL)
 	$(CXX) $(CXXFLAGS) $< $(filter-out %.h $<,$^) -o $@ $(LDFLAGS) -Wno-cast-qual
 
-llama-qwen2vl-cli: examples/llava/qwen2vl-cli.cpp \
-	examples/llava/llava.cpp \
-	examples/llava/llava.h \
-	examples/llava/clip.cpp \
-	examples/llava/clip.h \
+llama-qwen2vl-cli: tools/llava/qwen2vl-cli.cpp \
+	tools/llava/llava.cpp \
+	tools/llava/llava.h \
+	tools/llava/clip.cpp \
+	tools/llava/clip.h \
 	$(OBJ_ALL)
 	$(CXX) $(CXXFLAGS) $< $(filter-out %.h $<,$^) -o $@ $(LDFLAGS) -Wno-cast-qual
 
@@ -1472,12 +1480,12 @@ tests/test-double-float: tests/test-double-float.cpp
 
 tests/test-json-schema-to-grammar: tests/test-json-schema-to-grammar.cpp \
 	$(OBJ_ALL)
-	$(CXX) $(CXXFLAGS) -Iexamples/server -c $< -o $(call GET_OBJ_FILE, $<)
+	$(CXX) $(CXXFLAGS) -Itools/server -c $< -o $(call GET_OBJ_FILE, $<)
 	$(CXX) $(CXXFLAGS) $(filter-out %.h $<,$^) $(call GET_OBJ_FILE, $<) -o $@ $(LDFLAGS)
 
 tests/test-chat: tests/test-chat.cpp \
 	$(OBJ_ALL)
-	$(CXX) $(CXXFLAGS) -Iexamples/server -c $< -o $(call GET_OBJ_FILE, $<)
+	$(CXX) $(CXXFLAGS) -Itools/server -c $< -o $(call GET_OBJ_FILE, $<)
 	$(CXX) $(CXXFLAGS) $(filter-out %.h $<,$^) $(call GET_OBJ_FILE, $<) -o $@ $(LDFLAGS)
 
 tests/test-opt: tests/test-opt.cpp \

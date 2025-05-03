@@ -8,7 +8,7 @@
 
     Example:
         python scripts/fetch_server_test_models.py
-        ( cd examples/server/tests && ./tests.sh -v -x -m slow )
+        ( cd tools/server/tests && ./tests.sh -v -x -m slow )
 '''
 import ast
 import glob
@@ -66,7 +66,7 @@ if __name__ == '__main__':
 
     models = sorted(list(set([
         model
-        for test_file in glob.glob('examples/server/tests/unit/test_*.py')
+        for test_file in glob.glob('tools/server/tests/unit/test_*.py')
         for model in collect_hf_model_test_parameters(test_file)
     ])), key=lambda m: (m.hf_repo, m.hf_file))
 
@@ -75,7 +75,7 @@ if __name__ == '__main__':
         logging.info(f'  - {m.hf_repo} / {m.hf_file}')
 
     cli_path = os.environ.get(
-        'LLAMA_SERVER_BIN_PATH',
+        'LLAMA_CLI_BIN_PATH',
         os.path.join(
             os.path.dirname(__file__),
             '../build/bin/Release/llama-cli.exe' if os.name == 'nt' else '../build/bin/llama-cli'))
