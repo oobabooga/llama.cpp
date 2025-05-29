@@ -4,6 +4,7 @@
 #include "llama-io.h"
 #include "llama-graph.h"
 #include "llama-memory.h"
+#include "llama-kv-cells.h"
 
 #include "ggml-cpp.h"
 
@@ -35,6 +36,7 @@ struct llama_kv_cache : public llama_memory_i {
     virtual void defrag_sched(float thold) = 0;
 
     // simulate full cache, used for allocating worst-case compute buffers
+    // TODO: remove
     virtual void set_full() = 0;
 
     //
@@ -42,7 +44,7 @@ struct llama_kv_cache : public llama_memory_i {
     //
 
     // =============================================================================================================
-    // TODO: refactor  and simplify this
+    // TODO: refactor and simplify this [TAG: KV_API]
 
     virtual llama_sbatch sbatch_init(const llama_batch & batch, bool logits_all) = 0;
 
@@ -55,10 +57,7 @@ struct llama_kv_cache : public llama_memory_i {
     // =============================================================================================================
 
     // getters
-    virtual int32_t   get_n_tokens()   const = 0;
-    virtual int32_t   get_used_cells() const = 0; // TODO: remove, this is too-specific to the unified cache
-    virtual llama_pos get_pos_max()    const = 0;
-    virtual bool      get_can_shift()  const = 0;
+    virtual bool get_can_shift() const = 0;
 
     bool get_can_edit() const override { return get_can_shift(); }
 
@@ -108,7 +107,8 @@ public:
                          bool    v_trans,
                          bool    offload,
                      uint32_t    kv_size,
-                     uint32_t    padding,
+                     uint32_t    n_seq_max,
+                     uint32_t    n_pad,
                      uint32_t    n_swa,
                llama_swa_type    swa_type);
 
@@ -123,7 +123,7 @@ public:
     bool seq_rm  (llama_seq_id seq_id,                              llama_pos p0, llama_pos p1) override;
     void seq_cp  (llama_seq_id seq_id_src, llama_seq_id seq_id_dst, llama_pos p0, llama_pos p1) override;
     void seq_keep(llama_seq_id seq_id)                                                          override;
-    void seq_add (llama_seq_id seq_id,                              llama_pos p0, llama_pos p1, llama_pos delta) override;
+    void seq_add (llama_seq_id seq_id,                              llama_pos p0, llama_pos p1, llama_pos shift) override;
     void seq_div (llama_seq_id seq_id,                              llama_pos p0, llama_pos p1, int d) override;
 
     llama_pos seq_pos_min(llama_seq_id seq_id) const override;
@@ -150,12 +150,6 @@ public:
     // to the first cell of the slot.
     bool find_slot(const llama_ubatch & batch) override;
 
-    int32_t get_n_tokens()   const override;
-    int32_t get_used_cells() const override;
-
-    // TODO: better data structures to reduce the cost of this operation
-    llama_pos get_pos_max() const override;
-
     bool get_can_shift() const override;
 
     // state write/load
@@ -167,7 +161,7 @@ public:
     // llama_kv_cache_unified specific API
     //
 
-    uint32_t get_n() const;
+    uint32_t get_n()    const;
     uint32_t get_size() const;
 
     // get views of the current state of the cache
@@ -188,26 +182,6 @@ private:
     const llama_model & model;
     const llama_hparams & hparams;
 
-    struct kv_cell {
-        llama_pos pos   = -1;
-        llama_pos delta =  0;
-
-        // TODO: replace with bitset uint64_t
-        std::set<llama_seq_id> seq_id;
-
-        bool has_seq_id(const llama_seq_id & id) const {
-            return seq_id.find(id) != seq_id.end();
-        }
-
-        bool is_empty() const {
-            return seq_id.empty();
-        }
-
-        bool is_same_seq(const kv_cell & other) const {
-            return seq_id == other.seq_id;
-        }
-    };
-
     struct kv_layer {
         // layer index in the model
         // note: can be different from the layer index in the KV cache
@@ -217,44 +191,51 @@ private:
         ggml_tensor * v;
     };
 
-    bool has_shift = false;
     bool do_defrag = false;
     bool v_trans   = true;  // the value tensor is transposed
 
     uint32_t head = 0; // the location where the batch will be placed in the cache (see find_slot())
-    uint32_t size = 0; // total number of cells, shared across all sequences
-    uint32_t used = 0; // used cells (i.e. at least one seq_id) (TODO: add `struct kv_cells` and keep track automaticallt)
 
     // computed before each graph build
+    // TODO: cells should start to maintain this value dynamically based on the edits
     uint32_t n = 0;
 
-    // required padding
-    uint32_t padding = 1;
+    const uint32_t n_seq_max = 1;
 
-    ggml_type type_k = GGML_TYPE_F16;
-    ggml_type type_v = GGML_TYPE_F16;
+    // required padding
+    const uint32_t n_pad = 1;
 
     // SWA
-    uint32_t n_swa = 0;
+    const uint32_t n_swa = 0;
 
-    llama_swa_type swa_type = LLAMA_SWA_TYPE_NONE;
+    const llama_swa_type swa_type = LLAMA_SWA_TYPE_NONE;
 
     std::vector<ggml_context_ptr>        ctxs;
     std::vector<ggml_backend_buffer_ptr> bufs;
 
-    std::vector<kv_cell>  cells;  // TODO: replace with `struct kv_cells`
+    llama_kv_cells_unified cells;
+
     std::vector<kv_layer> layers;
 
     // model layer id -> KV cache layer id
     std::unordered_map<int32_t, int32_t> map_layer_ids;
 
     // recovery information used to restore the KV cells to their original state in case of a failure
+    // TODO: do not store as a state in the llama_kv_cache object, instead return upon batch preparation
+    //       to achieve that, first need to refactor the llama_kv_cache interface [TAG: KV_API]
     struct {
         void clear() {
-            cells.clear();
+            states.clear();
         }
 
-        std::unordered_map<uint32_t, kv_cell> cells;
+        struct state {
+            uint32_t i;
+
+            llama_kv_cells_unified cells;
+        };
+
+        // stack with the partial states before each ubatch
+        std::vector<state> states;
     } recovery;
 
     // defrag
@@ -264,9 +245,6 @@ private:
 
     // return true if cells have been moved
     bool defrag_prepare(int32_t n_max_nodes);
-
-    // find how many cells are currently in use
-    uint32_t cell_max() const;
 
     size_t total_size() const;
 
@@ -317,11 +295,11 @@ public:
                     ggml_type   type_v,
                          bool   v_trans,
                          bool   offload,
-                     uint32_t   kv_size,
                          bool   swa_full,
+                     uint32_t   kv_size,
                      uint32_t   n_seq_max,
                      uint32_t   n_batch,
-                     uint32_t   padding);
+                     uint32_t   n_pad);
 
     ~llama_kv_cache_unified_iswa() = default;
 
@@ -334,7 +312,7 @@ public:
     bool seq_rm  (llama_seq_id seq_id,                              llama_pos p0, llama_pos p1) override;
     void seq_cp  (llama_seq_id seq_id_src, llama_seq_id seq_id_dst, llama_pos p0, llama_pos p1) override;
     void seq_keep(llama_seq_id seq_id)                                                          override;
-    void seq_add (llama_seq_id seq_id,                              llama_pos p0, llama_pos p1, llama_pos delta) override;
+    void seq_add (llama_seq_id seq_id,                              llama_pos p0, llama_pos p1, llama_pos shift) override;
     void seq_div (llama_seq_id seq_id,                              llama_pos p0, llama_pos p1, int d) override;
 
     llama_pos seq_pos_min(llama_seq_id seq_id) const override;
@@ -357,12 +335,6 @@ public:
     llama_ubatch ubatch_next(llama_sbatch & sbatch, uint32_t n_ubatch, bool embd_pooled) const override;
 
     bool find_slot(const llama_ubatch & batch) override;
-
-    int32_t get_n_tokens()   const override;
-    int32_t get_used_cells() const override;
-
-    // TODO: better data structures to reduce the cost of this operation
-    llama_pos get_pos_max() const override;
 
     bool get_can_shift() const override;
 
@@ -432,7 +404,8 @@ public:
                     ggml_type   type_k,
                     ggml_type   type_v,
                          bool   offload,
-                     uint32_t   kv_size);
+                     uint32_t   kv_size,
+                     uint32_t   n_seq_max);
 
     ~llama_kv_cache_recurrent() = default;
 
@@ -444,8 +417,8 @@ public:
 
     bool seq_rm  (llama_seq_id seq_id,                              llama_pos p0, llama_pos p1) override;
     void seq_cp  (llama_seq_id seq_id_src, llama_seq_id seq_id_dst, llama_pos p0, llama_pos p1) override;
-    void seq_keep(llama_seq_id seq_id) override;
-    void seq_add (llama_seq_id seq_id,                              llama_pos p0, llama_pos p1, llama_pos delta) override;
+    void seq_keep(llama_seq_id seq_id)                                                          override;
+    void seq_add (llama_seq_id seq_id,                              llama_pos p0, llama_pos p1, llama_pos shift) override;
     void seq_div (llama_seq_id seq_id,                              llama_pos p0, llama_pos p1, int d) override;
 
     llama_pos seq_pos_min(llama_seq_id seq_id) const override;
@@ -458,7 +431,7 @@ public:
     void restore() override;
     void commit()  override;
 
-    bool update(llama_context & lctx) override;
+    bool update(llama_context & ctx) override;
 
     void defrag_sched(float thold) override;
 
@@ -468,12 +441,6 @@ public:
     llama_ubatch ubatch_next(llama_sbatch & sbatch, uint32_t n_ubatch, bool embd_pooled) const override;
 
     bool find_slot(const llama_ubatch & batch) override;
-
-    int32_t get_n_tokens()   const override;
-    int32_t get_used_cells() const override;
-
-    // TODO: better data structures to reduce the cost of this operation
-    llama_pos get_pos_max() const override;
 
     bool get_can_shift() const override;
 
@@ -514,8 +481,7 @@ private:
         std::vector<slot_range> ranges;
     } pending;
 
-    ggml_type type_k = GGML_TYPE_F16;
-    ggml_type type_v = GGML_TYPE_F16;
+    const uint32_t n_seq_max = 1;
 
     std::vector<ggml_context_ptr>        ctxs;
     std::vector<ggml_backend_buffer_ptr> bufs;
