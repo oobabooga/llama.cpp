@@ -503,13 +503,16 @@ static __m256 __lasx_xvreplfr2vr_s(const float val) {
 // TODO: move to ggml-threading
 void ggml_barrier(struct ggml_threadpool * tp);
 
+void ggml_threadpool_chunk_set(struct ggml_threadpool * tp, int value);
+int  ggml_threadpool_chunk_add(struct ggml_threadpool * tp, int value);
+
 #ifdef __cplusplus
 }
 #endif
 
 #define GGML_DO_PRAGMA_(x) _Pragma (#x)
 #define GGML_DO_PRAGMA(x) GGML_DO_PRAGMA_(x)
-#if defined(GGML_CPU_GENERIC) || defined(__HIPCC__)
+#if defined(GGML_CPU_GENERIC) || defined(__HIPCC__) || defined(__APPLE__)
 // Note for Apple targets:
 // - clang: aliases are not supported on darwin
 // - all native kernels need to be implemented in both x86 and arm files
