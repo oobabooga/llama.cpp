@@ -38,6 +38,7 @@ enum llm_ffn_op_type {
     LLM_FFN_RELU_SQR,
     LLM_FFN_SWIGLU,
     LLM_FFN_GEGLU,
+    LLM_FFN_REGLU,
 };
 
 enum llm_ffn_gate_type {
@@ -248,7 +249,13 @@ public:
 
     void set_input(const llama_ubatch * ubatch) override;
 
+    ggml_tensor * get_k_idxs() const { return self_k_idxs; }
+    ggml_tensor * get_v_idxs() const { return self_v_idxs; }
+
     ggml_tensor * get_kq_mask() const { return self_kq_mask_cnv; }
+
+    ggml_tensor * self_k_idxs = nullptr; // I64 [n_batch]
+    ggml_tensor * self_v_idxs = nullptr; // I64 [n_batch]
 
     ggml_tensor * self_kq_mask     = nullptr; // F32 [n_kv, n_batch]
     ggml_tensor * self_kq_mask_cnv = nullptr; //     [n_kv, n_batch]
@@ -273,8 +280,18 @@ public:
 
     void set_input(const llama_ubatch * ubatch) override;
 
+    ggml_tensor * get_k_idxs()     const { return self_k_idxs; }
+    ggml_tensor * get_v_idxs()     const { return self_v_idxs; }
+    ggml_tensor * get_k_idxs_swa() const { return self_k_idxs_swa; }
+    ggml_tensor * get_v_idxs_swa() const { return self_v_idxs_swa; }
+
     ggml_tensor * get_kq_mask()     const { return self_kq_mask_cnv; }
     ggml_tensor * get_kq_mask_swa() const { return self_kq_mask_swa_cnv; }
+
+    ggml_tensor * self_k_idxs     = nullptr; // I64 [n_batch]
+    ggml_tensor * self_v_idxs     = nullptr; // I64 [n_batch]
+    ggml_tensor * self_k_idxs_swa = nullptr; // I64 [n_batch]
+    ggml_tensor * self_v_idxs_swa = nullptr; // I64 [n_batch]
 
     ggml_tensor * self_kq_mask         = nullptr; // F32 [n_kv, n_batch]
     ggml_tensor * self_kq_mask_cnv     = nullptr; //     [n_kv, n_batch]
@@ -318,7 +335,13 @@ public:
 
     ggml_tensor * s_copy; // I32 [kv_size]
 
+    ggml_tensor * get_k_idxs() const { return self_k_idxs; }
+    ggml_tensor * get_v_idxs() const { return self_v_idxs; }
+
     ggml_tensor * get_kq_mask() const { return self_kq_mask_cnv; }
+
+    ggml_tensor * self_k_idxs = nullptr; // I64 [n_batch]
+    ggml_tensor * self_v_idxs = nullptr; // I64 [n_batch]
 
     ggml_tensor * self_kq_mask     = nullptr; // F32 [n_kv, n_batch]
     ggml_tensor * self_kq_mask_cnv = nullptr; //     [n_kv, n_batch]
@@ -335,7 +358,7 @@ public:
     llm_graph_input_one() {}
     virtual ~llm_graph_input_one() = default;
 
-    void set_input(const llama_ubatch *) override;
+    void set_input(const llama_ubatch * ubatch) override;
 
     ggml_tensor * one = nullptr; // F32
 };
@@ -423,6 +446,9 @@ struct llm_graph_params {
     const llm_graph_cb & cb;
 };
 
+// used in build_rs to properly order writes and avoid unnecessary copies
+using llm_graph_get_rows_fn = std::function<ggml_tensor * (ggml_context *, ggml_tensor * states, ggml_tensor * ids)>;
+
 struct llm_graph_context {
     const llm_arch arch;
 
@@ -475,6 +501,7 @@ struct llm_graph_context {
     std::unique_ptr<llm_graph_result> res;
 
     llm_graph_context(const llm_graph_params & params);
+    virtual ~llm_graph_context() = default;
 
     void cb(ggml_tensor * cur, const char * name, int il) const;
 
@@ -661,7 +688,7 @@ struct llm_graph_context {
                uint32_t   kv_head,
                uint32_t   kv_size,
                 int32_t   rs_zero,
-                   bool   avoid_copies = false) const;
+            const llm_graph_get_rows_fn & get_state_rows = ggml_get_rows) const;
 
     llm_graph_input_rs * build_rs_inp() const;
 
@@ -671,7 +698,7 @@ struct llm_graph_context {
             ggml_tensor * s,
                 int32_t   state_size,
                 int32_t   n_seqs,
-                   bool   avoid_copies = false) const;
+            const llm_graph_get_rows_fn & get_state_rows = ggml_get_rows) const;
 
     ggml_tensor * build_rs(
             llm_graph_input_mem_hybrid * inp,
@@ -679,7 +706,7 @@ struct llm_graph_context {
             ggml_tensor * s,
                 int32_t   state_size,
                 int32_t   n_seqs,
-                   bool   avoid_copies = false) const;
+            const llm_graph_get_rows_fn & get_state_rows = ggml_get_rows) const;
 
     ggml_tensor * build_rwkv_token_shift_load(
         llm_graph_input_rs * inp,
