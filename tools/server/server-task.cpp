@@ -83,6 +83,7 @@ json task_params::to_json(bool only_metrics) const {
             {"speculative.ngram_m_hits",  speculative.ngram_min_hits},
             {"timings_per_token",         timings_per_token},
             {"post_sampling_probs",       post_sampling_probs},
+            {"prompt_logprobs",           prompt_logprobs},
             {"backend_sampling",          sampling.backend_sampling},
             {"lora",                      lora},
         };
@@ -146,6 +147,7 @@ json task_params::to_json(bool only_metrics) const {
         {"speculative.ngram_m_hits",  speculative.ngram_min_hits},
         {"timings_per_token",         timings_per_token},
         {"post_sampling_probs",       post_sampling_probs},
+        {"prompt_logprobs",           prompt_logprobs},
         {"backend_sampling",          sampling.backend_sampling},
         {"lora",                      lora},
     };
@@ -301,6 +303,7 @@ task_params server_task::params_from_json_cmpl(
     params.sampling.min_keep           = json_value(data, "min_keep",            defaults.sampling.min_keep);
     params.sampling.backend_sampling   = json_value(data, "backend_sampling",    defaults.sampling.backend_sampling);
     params.post_sampling_probs         = json_value(data, "post_sampling_probs", defaults.post_sampling_probs);
+    params.prompt_logprobs             = json_value(data, "prompt_logprobs",     defaults.prompt_logprobs);
 
     params.speculative.n_min = json_value(data, "speculative.n_min", defaults.speculative.n_min);
     params.speculative.n_max = json_value(data, "speculative.n_max", defaults.speculative.n_max);
@@ -750,6 +753,9 @@ json server_task_result_cmpl_final::to_json_non_oaicompat() {
     };
     if (!stream && !probs_output.empty()) {
         res["completion_probabilities"] = completion_token_output::probs_vector_to_json(probs_output, post_sampling_probs);
+    }
+    if (!stream && !prompt_probs_output.empty()) {
+        res["prompt_probabilities"] = completion_token_output::probs_vector_to_json(prompt_probs_output, post_sampling_probs);
     }
     return response_fields.empty() ? res : json_get_nested_values(response_fields, res);
 }

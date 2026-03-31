@@ -88,6 +88,7 @@ struct server_slot {
     std::vector<int32_t> i_batch_dft;
 
     std::vector<completion_token_output> generated_token_probs;
+    std::vector<completion_token_output> prompt_token_probs;
 
     bool has_next_token = true;
     bool has_new_line   = false;
@@ -181,6 +182,7 @@ struct server_slot {
         i_batch_dft.clear();
         generated_tokens.clear();
         generated_token_probs.clear();
+        prompt_token_probs.clear();
         json_schema = json();
 
         // clear speculative decoding stats
@@ -1355,14 +1357,12 @@ private:
                 });
             }
         } else {
-            // TODO: optimize this with min-p optimization
-            std::vector<llama_token_data> cur = get_token_probabilities(ctx, idx);
+            std::vector<llama_token_data> cur = get_token_probabilities(ctx, idx, n_probs_request);
             const size_t max_probs = cur.size();
             const size_t n_probs = std::min(max_probs, n_probs_request);
 
-            // set probability for sampled token
+            // set probability for sampled token (scan full vector since only top n_probs are sorted)
             for (size_t i = 0; i < max_probs; i++) {
-                // set probability for sampled token
                 if (cur[i].id == result.tok) {
                     result.prob = cur[i].p;
                     break;
@@ -1510,6 +1510,10 @@ private:
                 res->probs_output = std::vector<completion_token_output>(
                         slot.generated_token_probs.begin(),
                         slot.generated_token_probs.end());
+            }
+
+            if (slot.task->params.prompt_logprobs) {
+                res->prompt_probs_output = slot.prompt_token_probs;
             }
         }
 
@@ -2539,6 +2543,11 @@ private:
                             slot.task->need_embd());
                         slot.prompt.tokens.push_back(cur_tok);
 
+                        // enable logits for all prompt tokens when prompt_logprobs is requested
+                        if (slot.task->params.prompt_logprobs && slot.task->params.sampling.n_probs > 0) {
+                            batch.logits[batch.n_tokens - 1] = true;
+                        }
+
                         slot.n_prompt_tokens_processed++;
 
                         // process the last few tokens of the prompt separately in order to allow for a checkpoint to be created.
@@ -2784,6 +2793,39 @@ private:
                         slot.copy_state_to(*child);
                         child->state = SLOT_STATE_DONE_PROMPT;
                     }
+                }
+            }
+
+            // collect prompt token logprobs from the batch we just decoded
+            // logits at position j predict the token at position j+1 (autoregressive),
+            // so we record the next prompt token with probabilities from position j.
+            for (auto & slot : slots) {
+                if (!slot.task || !slot.task->params.prompt_logprobs || slot.task->params.sampling.n_probs == 0) {
+                    continue;
+                }
+                if (slot.state != SLOT_STATE_PROCESSING_PROMPT && slot.state != SLOT_STATE_DONE_PROMPT) {
+                    continue;
+                }
+
+                const auto & input_tokens = slot.task->tokens;
+
+                for (int j = 0; j < n_tokens; j++) {
+                    if (!batch_view.logits[j] || batch_view.seq_id[j][0] != slot.id) {
+                        continue;
+                    }
+
+                    // find the next prompt token (the one these logits predict)
+                    const int next_pos = batch_view.pos[j] + 1;
+                    if (next_pos >= slot.task->n_tokens()) {
+                        continue; // last prompt token - its logits predict the first completion token
+                    }
+
+                    completion_token_output result;
+                    result.tok          = input_tokens[next_pos];
+                    result.text_to_send = common_token_to_piece(ctx, result.tok, params_base.special);
+                    result.prob         = 1.0f;
+                    populate_token_probs(slot, result, false, params_base.special, j);
+                    slot.prompt_token_probs.push_back(result);
                 }
             }
 

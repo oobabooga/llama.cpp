@@ -1752,7 +1752,7 @@ json format_response_rerank(
 // other utils
 //
 
-std::vector<llama_token_data> get_token_probabilities(llama_context * ctx, int idx) {
+std::vector<llama_token_data> get_token_probabilities(llama_context * ctx, int idx, size_t n_probs) {
     std::vector<llama_token_data> cur;
 
     const auto * logits = llama_get_logits_ith(ctx, idx);
@@ -1771,13 +1771,16 @@ std::vector<llama_token_data> get_token_probabilities(llama_context * ctx, int i
         }
     }
 
-    // sort tokens by logits
-    std::sort(cur.begin(), cur.end(), [](const llama_token_data & a, const llama_token_data & b) {
+    const auto comp = [](const llama_token_data & a, const llama_token_data & b) {
         return a.logit > b.logit;
-    });
+    };
+
+    // find max logit for softmax numerical stability
+    float max_l = std::max_element(cur.begin(), cur.end(), [](const llama_token_data & a, const llama_token_data & b) {
+        return a.logit < b.logit;
+    })->logit;
 
     // apply softmax
-    float max_l = cur[0].logit;
     float cum_sum = 0.0f;
     for (size_t i = 0; i < cur.size(); ++i) {
         float p = expf(cur[i].logit - max_l);
@@ -1786,6 +1789,13 @@ std::vector<llama_token_data> get_token_probabilities(llama_context * ctx, int i
     }
     for (size_t i = 0; i < cur.size(); ++i) {
         cur[i].p /= cum_sum;
+    }
+
+    // partial sort: only place the top n_probs tokens in sorted order at the front
+    if (n_probs > 0 && n_probs < cur.size()) {
+        std::partial_sort(cur.begin(), cur.begin() + n_probs, cur.end(), comp);
+    } else {
+        std::sort(cur.begin(), cur.end(), comp);
     }
 
     return cur;
