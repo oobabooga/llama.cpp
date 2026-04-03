@@ -673,10 +673,9 @@ common_chat_templates_ptr common_chat_templates_init(const struct llama_model * 
     try {
         tmpls->template_default = std::make_unique<common_chat_template>(default_template_src, token_bos, token_eos);
     } catch (const std::exception & e) {
-        LOG_ERR("%s: error: %s\n", __func__, e.what());
-        LOG_ERR("%s: failed to initialize chat template\n", __func__);
-        LOG_ERR("%s: please consider disabling jinja via --no-jinja, or using another chat template\n", __func__);
-        throw e;
+        LOG_WRN("%s: failed to parse chat template with jinja: %s\n", __func__, e.what());
+        LOG_WRN("%s: falling back to chatml; if you need jinja, use --chat-template to override\n", __func__);
+        tmpls->template_default = std::make_unique<common_chat_template>(CHATML_TEMPLATE_SRC, token_bos, token_eos);
     }
     if (!template_tool_use_src.empty()) {
         try {
