@@ -175,6 +175,7 @@ class Keys:
         SLIDING_WINDOW               = "{arch}.attention.sliding_window"
         SCALE                        = "{arch}.attention.scale"
         OUTPUT_SCALE                 = "{arch}.attention.output_scale"
+        VALUE_SCALE                  = "{arch}.attention.value_scale"
         TEMPERATURE_LENGTH           = "{arch}.attention.temperature_length"
         KEY_LENGTH_MLA               = "{arch}.attention.key_length_mla"
         VALUE_LENGTH_MLA             = "{arch}.attention.value_length_mla"
@@ -773,6 +774,14 @@ class MODEL_TENSOR(IntEnum):
     V_DS_NORM            = auto() # qwen3vl
     V_DS_FC1             = auto() # qwen3vl
     V_DS_FC2             = auto() # qwen3vl
+    V_MERGER_LN1         = auto() # minicpmv4_6
+    V_MERGER_ATTN_Q      = auto() # minicpmv4_6
+    V_MERGER_ATTN_K      = auto() # minicpmv4_6
+    V_MERGER_ATTN_V      = auto() # minicpmv4_6
+    V_MERGER_ATTN_O      = auto() # minicpmv4_6
+    V_MERGER_DS_LN       = auto() # minicpmv4_6
+    V_MERGER_DS_UP       = auto() # minicpmv4_6
+    V_MERGER_DS_DOWN     = auto() # minicpmv4_6
     V_MM_POST_FC_NORM    = auto() # cogvlm
     V_MM_UP              = auto() # cogvlm
     V_MM_DOWN            = auto() # cogvlm
@@ -1277,6 +1286,14 @@ TENSOR_NAMES: dict[MODEL_TENSOR, str] = {
     MODEL_TENSOR.V_DS_NORM:                 "v.deepstack.{bid}.norm",
     MODEL_TENSOR.V_DS_FC1:                  "v.deepstack.{bid}.fc1",
     MODEL_TENSOR.V_DS_FC2:                  "v.deepstack.{bid}.fc2",
+    MODEL_TENSOR.V_MERGER_LN1:              "v.vit_merger.ln1",
+    MODEL_TENSOR.V_MERGER_ATTN_Q:           "v.vit_merger.attn_q",
+    MODEL_TENSOR.V_MERGER_ATTN_K:           "v.vit_merger.attn_k",
+    MODEL_TENSOR.V_MERGER_ATTN_V:           "v.vit_merger.attn_v",
+    MODEL_TENSOR.V_MERGER_ATTN_O:           "v.vit_merger.attn_out",
+    MODEL_TENSOR.V_MERGER_DS_LN:            "v.vit_merger.ds_ln",
+    MODEL_TENSOR.V_MERGER_DS_UP:            "v.vit_merger.ds_ffn_up",
+    MODEL_TENSOR.V_MERGER_DS_DOWN:          "v.vit_merger.ds_ffn_down",
     MODEL_TENSOR.V_MM_POST_FC_NORM:         "mm.post_fc_norm", # cogvlm
     MODEL_TENSOR.V_MM_UP:                   "mm.up",
     MODEL_TENSOR.V_MM_DOWN:                 "mm.down",
@@ -1449,6 +1466,14 @@ MODEL_TENSORS: dict[MODEL_ARCH, list[MODEL_TENSOR]] = {
         MODEL_TENSOR.V_DS_NORM,
         MODEL_TENSOR.V_DS_FC1,
         MODEL_TENSOR.V_DS_FC2,
+        MODEL_TENSOR.V_MERGER_LN1,
+        MODEL_TENSOR.V_MERGER_ATTN_Q,
+        MODEL_TENSOR.V_MERGER_ATTN_K,
+        MODEL_TENSOR.V_MERGER_ATTN_V,
+        MODEL_TENSOR.V_MERGER_ATTN_O,
+        MODEL_TENSOR.V_MERGER_DS_LN,
+        MODEL_TENSOR.V_MERGER_DS_UP,
+        MODEL_TENSOR.V_MERGER_DS_DOWN,
         MODEL_TENSOR.V_MM_POST_FC_NORM,
         MODEL_TENSOR.V_MM_UP,
         MODEL_TENSOR.V_MM_DOWN,
@@ -3844,6 +3869,7 @@ MODEL_TENSORS: dict[MODEL_ARCH, list[MODEL_TENSOR]] = {
         MODEL_TENSOR.OUTPUT_NORM,
         MODEL_TENSOR.OUTPUT,
         MODEL_TENSOR.ATTN_NORM,
+        MODEL_TENSOR.ATTN_QKV,
         MODEL_TENSOR.ATTN_Q,
         MODEL_TENSOR.ATTN_K,
         MODEL_TENSOR.ATTN_V,
@@ -3858,6 +3884,10 @@ MODEL_TENSORS: dict[MODEL_ARCH, list[MODEL_TENSOR]] = {
         MODEL_TENSOR.FFN_DOWN_EXP,
         MODEL_TENSOR.FFN_UP_EXP,
         MODEL_TENSOR.FFN_EXP_PROBS_B,
+        MODEL_TENSOR.LAYER_OUT_NORM,
+        MODEL_TENSOR.NEXTN_EH_PROJ,
+        MODEL_TENSOR.NEXTN_ENORM,
+        MODEL_TENSOR.NEXTN_HNORM,
     ],
     MODEL_ARCH.STEP35: [
         MODEL_TENSOR.TOKEN_EMBD,
@@ -4224,6 +4254,7 @@ class VisionProjectorType:
     NEMOTRON_V2_VL = "nemotron_v2_vl"
     HUNYUANOCR     = "hunyuanocr"
     HUNYUANVL      = "hunyuanvl"
+    MINICPMV4_6    = "minicpmv4_6"
     GRANITE_SPEECH = "granite_speech"  # audio
 
 
