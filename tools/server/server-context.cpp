@@ -3120,7 +3120,7 @@ private:
 
                     completion_token_output result;
                     result.tok          = input_tokens[next_pos];
-                    result.text_to_send = common_token_to_piece(ctx, result.tok, params_base.special);
+                    result.text_to_send = common_token_to_piece(slot.ctx_tgt, result.tok, params_base.special);
                     result.prob         = 1.0f;
                     populate_token_probs(slot, result, false, params_base.special, j);
                     slot.prompt_token_probs.push_back(result);
