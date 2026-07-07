@@ -1,0 +1,138 @@
+# Throwaway probe: do not merge.
+#
+# Reproduces the Windows CPU bundle startup failure reported on
+# unslothai/unsloth#6311 (llama-server fails to start when serving a GGUF)
+# and validates the suspected root cause: the packaging step in
+# unsloth-prebuilt-cpu.yml globs the VS redist libomp140 dir and
+# Select-Object -First 1 picks the OLDEST MSVC toolset, whose libomp lacks
+# __kmpc_dispatch_deinit (imported by ggml-base.dll built with the image's
+# newer clang). Upstream ggml-org pins the newest redist dir instead.
+#
+# Phases:
+#   A. enumerate the runner's VC redist libomp candidates (glob pick vs newest)
+#   B. control: ggml-org b9902 win-cpu-x64 bundle (expect: works)
+#   C. fork bundle as shipped (expect: STATUS_ENTRYPOINT_NOT_FOUND 0xC0000139)
+#   D. fork bundle with the NEWEST redist libomp swapped in (expect: works)
+#
+# The job fails only if B or D misbehaves (i.e. the harness or the fix theory
+# is wrong). C failing is the expected reproduction.
+
+name: "Probe: windows-cpu libomp entrypoint"
+
+on:
+  push:
+    branches: [probe-win-cpu-libomp-ci]
+
+permissions:
+  contents: read
+
+env:
+  FORK_ZIP_URL: https://github.com/unslothai/llama.cpp/releases/download/b9894-mix-cb00846/app-b9894-mix-cb00846-windows-x64-cpu.zip
+  CONTROL_ZIP_URL: https://github.com/ggml-org/llama.cpp/releases/download/b9902/llama-b9902-bin-win-cpu-x64.zip
+  MODEL_URL: https://huggingface.co/ggml-org/models/resolve/main/tinyllamas/stories260K.gguf
+
+jobs:
+  probe-x64:
+    runs-on: windows-2025-vs2026
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Download bundles and tiny model
+        run: |
+          curl.exe -sSfL -o fork.zip $env:FORK_ZIP_URL
+          curl.exe -sSfL -o control.zip $env:CONTROL_ZIP_URL
+          curl.exe -sSfL -o stories260K.gguf $env:MODEL_URL
+          7z x -y -ofork fork.zip | Out-Null
+          7z x -y -ocontrol control.zip | Out-Null
+          Get-ChildItem . | Select-Object Name, Length
+
+      - name: Probe
+        run: |
+          $ErrorActionPreference = 'Continue'
+          # Suppress WER/loader hard-error dialogs so a failing exe exits
+          # instead of hanging the runner on a message box.
+          Add-Type -Namespace Win -Name Native -MemberDefinition '[DllImport("kernel32.dll")] public static extern uint SetErrorMode(uint mode);'
+          [Win.Native]::SetErrorMode(0x8003) | Out-Null
+
+          function CodeStr($c) { '0x{0:X8} ({1})' -f ($c -band 0xFFFFFFFF), $c }
+
+          function Run-Exe($exe, $argList, $timeoutSec = 120) {
+            $so = [System.IO.Path]::GetTempFileName()
+            $se = [System.IO.Path]::GetTempFileName()
+            $p = Start-Process -FilePath $exe -ArgumentList $argList -NoNewWindow -PassThru `
+              -RedirectStandardOutput $so -RedirectStandardError $se -WorkingDirectory (Split-Path $exe)
+            if (-not $p.WaitForExit($timeoutSec * 1000)) {
+              $p.Kill()
+              return @{ code = 'TIMEOUT'; ok = $false; out = (Get-Content $so, $se -Raw -ErrorAction SilentlyContinue | Out-String) }
+            }
+            $out = ((Get-Content $so -Raw -ErrorAction SilentlyContinue) + "`n" + (Get-Content $se -Raw -ErrorAction SilentlyContinue))
+            return @{ code = CodeStr($p.ExitCode); ok = ($p.ExitCode -eq 0); out = $out }
+          }
+
+          function Test-Server($dir, $model, $port) {
+            $p = Start-Process -FilePath "$dir\llama-server.exe" `
+              -ArgumentList @('-m', $model, '--port', "$port", '--host', '127.0.0.1') `
+              -NoNewWindow -PassThru -WorkingDirectory $dir `
+              -RedirectStandardOutput "$dir\srv.out.log" -RedirectStandardError "$dir\srv.err.log"
+            $healthy = $false
+            foreach ($i in 1..40) {
+              Start-Sleep -Seconds 3
+              if ($p.HasExited) { break }
+              try {
+                $r = Invoke-WebRequest -Uri "http://127.0.0.1:$port/health" -UseBasicParsing -TimeoutSec 3
+                if ($r.StatusCode -eq 200) { $healthy = $true; break }
+              } catch {}
+            }
+            $code = if ($p.HasExited) { CodeStr($p.ExitCode) } else { 'still running' }
+            if (-not $p.HasExited) { $p.Kill() }
+            return @{ healthy = $healthy; code = $code; log = (Get-Content "$dir\srv.err.log" -Raw -ErrorAction SilentlyContinue) }
+          }
+
+          function Test-Bundle($label, $dir, $model) {
+            Write-Host "`n########## $label ##########"
+            $ver = Run-Exe "$dir\llama-server.exe" @('--version') 60
+            Write-Host ">> llama-server --version: exit=$($ver.code)"
+            Write-Host $ver.out
+            $cli = Run-Exe "$dir\llama-cli.exe" @('-m', $model, '-p', 'Once upon a time', '-n', '16', '--no-cnv', '--seed', '1') 180
+            Write-Host ">> llama-cli generate: exit=$($cli.code)"
+            Write-Host ($cli.out | Select-Object -Last 1)
+            $srv = Test-Server $dir $model (8100 + (Get-Random -Maximum 400))
+            Write-Host ">> llama-server /health: healthy=$($srv.healthy) exit=$($srv.code)"
+            if (-not $srv.healthy) { Write-Host $srv.log }
+            return @{ version = $ver; cli = $cli; server = $srv }
+          }
+
+          $model = "$PWD\stories260K.gguf"
+
+          Write-Host "########## Phase A: VC redist libomp candidates ##########"
+          $redist = 'C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Redist\MSVC'
+          Get-ChildItem $redist -Directory | ForEach-Object { Write-Host "redist dir: $($_.Name)" }
+          $cands = Get-ChildItem "$redist\*\debug_nonredist\x64\Microsoft.VC*.OpenMP.LLVM\libomp140.x86_64.dll" -ErrorAction SilentlyContinue
+          foreach ($c in $cands) {
+            $h = (Get-FileHash $c.FullName -Algorithm SHA256).Hash.ToLower()
+            Write-Host "candidate: $($c.FullName) size=$($c.Length) sha256=$h"
+          }
+          $globPick = $cands | Select-Object -First 1
+          $newest = $cands | Sort-Object { [version]$_.FullName.Substring($redist.Length + 1).Split('\')[0] } -Descending | Select-Object -First 1
+          Write-Host "glob (First 1) picks : $($globPick.FullName)"
+          Write-Host "newest by [version]  : $($newest.FullName)"
+          $shipped = (Get-FileHash "fork\libomp140.x86_64.dll" -Algorithm SHA256).Hash.ToLower()
+          Write-Host "fork bundle ships    : size=$((Get-Item fork\libomp140.x86_64.dll).Length) sha256=$shipped"
+
+          $control = Test-Bundle 'Phase B: control (ggml-org b9902)' "$PWD\control" $model
+          $asShipped = Test-Bundle 'Phase C: fork bundle as shipped' "$PWD\fork" $model
+
+          Write-Host "`n>> swapping in newest redist libomp: $($newest.FullName)"
+          Copy-Item $newest.FullName "fork\libomp140.x86_64.dll" -Force
+          $swapped = Test-Bundle 'Phase D: fork bundle + newest redist libomp' "$PWD\fork" $model
+
+          Write-Host "`n########## SUMMARY ##########"
+          Write-Host ("A: glob pick == shipped dll : {0}" -f (($globPick -and ((Get-FileHash $globPick.FullName -Algorithm SHA256).Hash.ToLower() -eq $shipped))))
+          Write-Host ("B  control   : version=$($control.version.code) cli=$($control.cli.code) server healthy=$($control.server.healthy)")
+          Write-Host ("C  as shipped: version=$($asShipped.version.code) cli=$($asShipped.cli.code) server healthy=$($asShipped.server.healthy) exit=$($asShipped.server.code)")
+          Write-Host ("D  swapped   : version=$($swapped.version.code) cli=$($swapped.cli.code) server healthy=$($swapped.server.healthy)")
+
+          if (-not ($control.cli.ok -and $control.server.healthy)) { Write-Error 'control bundle failed; harness broken'; exit 1 }
+          if (-not ($swapped.cli.ok -and $swapped.server.healthy)) { Write-Error 'libomp swap did not fix the fork bundle; fix theory wrong'; exit 1 }
+          Write-Host 'Probe conclusive: as-shipped result above is ground truth; libomp swap validated.'
