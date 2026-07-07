@@ -94,9 +94,9 @@ jobs:
             $ver = Run-Exe "$dir\llama-server.exe" @('--version') 60
             Write-Host ">> llama-server --version: exit=$($ver.code)"
             Write-Host $ver.out
-            $cli = Run-Exe "$dir\llama-cli.exe" @('--list-devices') 120
-            Write-Host ">> llama-cli --list-devices: exit=$($cli.code)"
-            Write-Host $cli.out
+            $cli = Run-Exe "$dir\llama-completion.exe" @('-m', $model, '-p', 'Once', '-n', '8') 120
+            Write-Host ">> llama-completion generate: exit=$($cli.code)"
+            Write-Host ($cli.out.Substring(0, [Math]::Min(300, $cli.out.Length)))
             $srv = Test-Server $dir $model (8100 + (Get-Random -Maximum 400))
             Write-Host ">> llama-server /health: healthy=$($srv.healthy) exit=$($srv.code)"
             if (-not $srv.healthy) { Write-Host $srv.log }
