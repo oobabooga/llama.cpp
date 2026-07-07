@@ -94,7 +94,7 @@ jobs:
             $ver = Run-Exe "$dir\llama-server.exe" @('--version') 60
             Write-Host ">> llama-server --version: exit=$($ver.code)"
             Write-Host $ver.out
-            $cli = Run-Exe "$dir\llama-cli.exe" @('-m', $model, '-p', 'Once upon a time', '-n', '16', '--no-cnv', '--seed', '1') 180
+            $cli = Run-Exe "$dir\llama-cli.exe" @('-m', $model, '-p', 'Once', '-n', '16', '--no-cnv', '--seed', '1') 180
             Write-Host ">> llama-cli generate: exit=$($cli.code)"
             Write-Host ($cli.out | Select-Object -Last 1)
             $srv = Test-Server $dir $model (8100 + (Get-Random -Maximum 400))
