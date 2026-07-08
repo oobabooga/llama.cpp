@@ -6,12 +6,12 @@
 name: "tmp: smoke arm64 CPU bundle on jammy"
 
 on:
-  workflow_dispatch:
-    inputs:
-      run_id:
-        description: 'Actions run id holding the app-*-linux-arm64-cpu artifact'
-        required: true
-        type: string
+  push:
+    branches: [tmp-smoke-arm64-jammy]
+
+env:
+  # Actions run id holding the app-*-linux-arm64-cpu artifact.
+  SOURCE_RUN_ID: "28913632512"
 
 permissions:
   actions: read
@@ -32,7 +32,7 @@ jobs:
       - name: Download bundle artifact
         run: |
           set -eux
-          gh run download "${{ inputs.run_id }}" --repo "$GITHUB_REPOSITORY" \
+          gh run download "$SOURCE_RUN_ID" --repo "$GITHUB_REPOSITORY" \
             --pattern "*linux-arm64-cpu*" --dir art
           mkdir -p bundle
           tar -xzf art/*/app-*-linux-arm64-cpu.tar.gz -C bundle
