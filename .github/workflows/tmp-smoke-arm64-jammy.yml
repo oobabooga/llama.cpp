@@ -1,0 +1,55 @@
+# Throwaway smoke test for the jammy-built arm64 CPU bundle. Not for merge.
+# Downloads the app-*-linux-arm64-cpu artifact from a prebuilt run and runs it
+# on ubuntu-22.04-arm (glibc 2.35), the host class the ubuntu-24.04-arm-built
+# bundle failed to load on. Delete this branch after verification.
+
+name: "tmp: smoke arm64 CPU bundle on jammy"
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'Actions run id holding the app-*-linux-arm64-cpu artifact'
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-22.04-arm
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Host glibc / libstdc++
+        run: |
+          set -eux
+          ldd --version | head -1
+          strings /usr/lib/aarch64-linux-gnu/libstdc++.so.6 | grep '^GLIBCXX_3.4.3' | sort -V | tail -1 || true
+
+      - name: Download bundle artifact
+        run: |
+          set -eux
+          gh run download "${{ inputs.run_id }}" --repo "$GITHUB_REPOSITORY" \
+            --pattern "*linux-arm64-cpu*" --dir art
+          mkdir -p bundle
+          tar -xzf art/*/app-*-linux-arm64-cpu.tar.gz -C bundle
+
+      - name: Loader check (the old failure mode)
+        working-directory: bundle
+        run: |
+          set -eux
+          ldd ./llama-server
+          ./llama-server --version
+
+      - name: End-to-end inference (tiny model)
+        working-directory: bundle
+        run: |
+          set -eux
+          curl -sLo stories260K.gguf \
+            https://huggingface.co/ggml-org/models/resolve/main/tinyllamas/stories260K.gguf
+          ./llama-cli -m stories260K.gguf -p "Once upon a time" -n 16 --no-warmup 2>err.log | tee out.log
+          grep -i "loaded" err.log | head -3 || true
+          test -s out.log
