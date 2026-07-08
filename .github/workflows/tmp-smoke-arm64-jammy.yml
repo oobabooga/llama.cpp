@@ -44,15 +44,39 @@ jobs:
           ldd ./llama-server
           ./llama-server --version
 
+      - name: Diagnostics (binary, backend loading)
+        working-directory: bundle
+        timeout-minutes: 6
+        run: |
+          set -x
+          timeout 30 ./llama-cli --version; echo "cli-version-rc=$?"
+          # --list-devices forces ggml_backend_load_all: dlopen + score of every
+          # ggml-cpu variant .so. If this hangs, the problem is variant probing.
+          timeout 60 ./llama-server --list-devices; echo "list-devices-rc=$?"
+          true
+
       - name: End-to-end inference (tiny model)
         working-directory: bundle
-        timeout-minutes: 5
+        timeout-minutes: 10
         run: |
-          set -eux
+          set -x
           curl -sLo stories260K.gguf \
             https://huggingface.co/ggml-org/models/resolve/main/tinyllamas/stories260K.gguf
-          timeout 180 ./llama-cli -m stories260K.gguf -p "Once upon a time" -n 16 \
-            --no-warmup -no-cnv < /dev/null > out.log 2> err.log \
-            || { echo "llama-cli failed"; tail -40 err.log; exit 1; }
+          ls -la stories260K.gguf && file stories260K.gguf
+          if stdbuf -oL -eL timeout 120 ./llama-cli -m stories260K.gguf \
+              -p "Once upon a time" -n 16 --no-warmup -no-cnv < /dev/null \
+              > out.log 2> err.log; then
+            echo "=== inference OK (all variants present) ==="
+          else
+            echo "=== inference FAILED rc=$? with all variants; err.log tail: ==="
+            tail -30 err.log; wc -c err.log out.log
+            echo "=== retry without the armv9.2 (SME) variants ==="
+            mkdir -p quarantined && mv libggml-cpu-armv9.2*.so quarantined/
+            stdbuf -oL -eL timeout 120 ./llama-cli -m stories260K.gguf \
+              -p "Once upon a time" -n 16 --no-warmup -no-cnv < /dev/null \
+              > out.log 2> err.log \
+              || { echo "still failing rc=$?"; tail -30 err.log; exit 1; }
+            echo "=== inference OK without SME variants -> armv9.2 variant is the hang ==="
+          fi
           cat out.log
           test -s out.log
