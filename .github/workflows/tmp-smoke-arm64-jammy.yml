@@ -46,10 +46,13 @@ jobs:
 
       - name: End-to-end inference (tiny model)
         working-directory: bundle
+        timeout-minutes: 5
         run: |
           set -eux
           curl -sLo stories260K.gguf \
             https://huggingface.co/ggml-org/models/resolve/main/tinyllamas/stories260K.gguf
-          ./llama-cli -m stories260K.gguf -p "Once upon a time" -n 16 --no-warmup 2>err.log | tee out.log
-          grep -i "loaded" err.log | head -3 || true
+          timeout 180 ./llama-cli -m stories260K.gguf -p "Once upon a time" -n 16 \
+            --no-warmup -no-cnv < /dev/null > out.log 2> err.log \
+            || { echo "llama-cli failed"; tail -40 err.log; exit 1; }
+          cat out.log
           test -s out.log
