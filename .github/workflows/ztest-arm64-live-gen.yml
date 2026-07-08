@@ -1,10 +1,9 @@
-# Throwaway: do not merge. Runs the fork's arm64 CPU bundles on real arm64
-# runners (Linux + Windows), which cannot be executed on an x86 dev box, and
-# asserts llama-server actually loads a tiny GGUF and generates a token stream.
-# Downloads the shipped release asset directly (not built here), so this tests
-# exactly what users get.
+# Throwaway: do not merge. Runs the fork's CPU bundles on real runners of each
+# arch (x86_64 + arm64, Linux + Windows) and asserts llama-server actually
+# loads a tiny GGUF and generates a token stream. Downloads the shipped release
+# asset directly (not built here), so this tests exactly what users get.
 
-name: "ztest: arm64 CPU bundle live generation"
+name: "ztest: CPU bundle live generation"
 
 on:
   push:
@@ -19,15 +18,22 @@ env:
   PROMPT: '{"prompt":"The capital of France is","n_predict":24,"temperature":0.3,"cache_prompt":false}'
 
 jobs:
-  linux-arm64:
-    runs-on: ubuntu-24.04-arm
+  linux:
+    name: linux/${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x64,   runner: ubuntu-22.04,    asset: linux-x64-cpu.tar.gz }
+          - { arch: arm64, runner: ubuntu-24.04-arm, asset: linux-arm64-cpu.tar.gz }
     steps:
       - name: Download bundle + model
         run: |
           set -eux
           uname -m
-          curl -sSfL -o bundle.tar.gz "https://github.com/unslothai/llama.cpp/releases/download/${REL}/app-${REL}-linux-arm64-cpu.tar.gz"
+          curl -sSfL -o bundle.tar.gz "https://github.com/unslothai/llama.cpp/releases/download/${REL}/app-${REL}-${{ matrix.asset }}"
           mkdir bundle && tar -xzf bundle.tar.gz -C bundle
           curl -sSfL -o model.gguf "$MODEL_URL"
           file bundle/llama-server
@@ -46,16 +52,23 @@ jobs:
           echo "$resp" | python3 -c "import json,sys; d=json.load(sys.stdin); c=d.get('content',''); print('GENERATED:', repr(c)); assert c.strip(), 'empty generation'; print('OK tokens_predicted=', d.get('tokens_predicted'))"
           echo '--- server.log tail ---'; tail -20 server.log
 
-  windows-arm64:
-    runs-on: windows-11-arm
+  windows:
+    name: windows/${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x64,   runner: windows-2025,   asset: windows-x64-cpu.zip }
+          - { arch: arm64, runner: windows-11-arm,  asset: windows-arm64-cpu.zip }
     defaults:
       run:
         shell: pwsh
     steps:
       - name: Download bundle + model
         run: |
-          curl.exe -sSfL -o bundle.zip "https://github.com/unslothai/llama.cpp/releases/download/$env:REL/app-$env:REL-windows-arm64-cpu.zip"
+          curl.exe -sSfL -o bundle.zip "https://github.com/unslothai/llama.cpp/releases/download/$env:REL/app-$env:REL-${{ matrix.asset }}"
           Expand-Archive -Path bundle.zip -DestinationPath bundle -Force
           curl.exe -sSfL -o model.gguf "$env:MODEL_URL"
       - name: Version + generate
