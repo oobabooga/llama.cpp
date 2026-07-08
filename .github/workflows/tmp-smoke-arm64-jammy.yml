@@ -55,6 +55,9 @@ jobs:
           timeout 60 ./llama-server --list-devices; echo "list-devices-rc=$?"
           true
 
+      # llama-cli is an interactive TUI now and spins forever without a tty;
+      # llama-completion is the non-interactive tool (verified against the
+      # known-good x64 bundle: same llama-cli failure, clean completion here).
       - name: End-to-end inference (tiny model)
         working-directory: bundle
         timeout-minutes: 10
@@ -62,21 +65,11 @@ jobs:
           set -x
           curl -sLo stories260K.gguf \
             https://huggingface.co/ggml-org/models/resolve/main/tinyllamas/stories260K.gguf
-          ls -la stories260K.gguf && file stories260K.gguf
-          if stdbuf -oL -eL timeout 120 ./llama-cli -m stories260K.gguf \
-              -p "Once upon a time" -n 16 --no-warmup -no-cnv < /dev/null \
-              > out.log 2> err.log; then
-            echo "=== inference OK (all variants present) ==="
-          else
-            echo "=== inference FAILED rc=$? with all variants; err.log tail: ==="
-            tail -30 err.log; wc -c err.log out.log
-            echo "=== retry without the armv9.2 (SME) variants ==="
-            mkdir -p quarantined && mv libggml-cpu-armv9.2*.so quarantined/
-            stdbuf -oL -eL timeout 120 ./llama-cli -m stories260K.gguf \
-              -p "Once upon a time" -n 16 --no-warmup -no-cnv < /dev/null \
-              > out.log 2> err.log \
-              || { echo "still failing rc=$?"; tail -30 err.log; exit 1; }
-            echo "=== inference OK without SME variants -> armv9.2 variant is the hang ==="
-          fi
+          ls -la stories260K.gguf
+          timeout 120 ./llama-completion -m stories260K.gguf \
+            -p "Once upon a time" -n 16 --no-warmup < /dev/null \
+            > out.log 2> err.log \
+            || { echo "inference failed rc=$?"; tail -30 err.log; exit 1; }
+          echo "=== completion ==="
           cat out.log
           test -s out.log
