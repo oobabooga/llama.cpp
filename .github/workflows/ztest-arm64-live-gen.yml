@@ -1,0 +1,82 @@
+# Throwaway: do not merge. Runs the fork's arm64 CPU bundles on real arm64
+# runners (Linux + Windows), which cannot be executed on an x86 dev box, and
+# asserts llama-server actually loads a tiny GGUF and generates a token stream.
+# Downloads the shipped release asset directly (not built here), so this tests
+# exactly what users get.
+
+name: "ztest: arm64 CPU bundle live generation"
+
+on:
+  push:
+    branches: [test-arm64-live-gen]
+
+permissions:
+  contents: read
+
+env:
+  REL: b9899-mix-5dd3721
+  MODEL_URL: https://huggingface.co/unsloth/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf
+  PROMPT: '{"prompt":"The capital of France is","n_predict":24,"temperature":0.3,"cache_prompt":false}'
+
+jobs:
+  linux-arm64:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    steps:
+      - name: Download bundle + model
+        run: |
+          set -eux
+          uname -m
+          curl -sSfL -o bundle.tar.gz "https://github.com/unslothai/llama.cpp/releases/download/${REL}/app-${REL}-linux-arm64-cpu.tar.gz"
+          mkdir bundle && tar -xzf bundle.tar.gz -C bundle
+          curl -sSfL -o model.gguf "$MODEL_URL"
+          file bundle/llama-server
+      - name: Version + generate
+        run: |
+          set -eux
+          ./bundle/llama-server --version
+          nohup ./bundle/llama-server -m model.gguf --host 127.0.0.1 --port 8080 -t 4 -c 1024 > server.log 2>&1 &
+          for i in $(seq 1 90); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/health || true)
+            [ "$code" = "200" ] && break
+            sleep 2
+          done
+          resp=$(curl -sS http://127.0.0.1:8080/completion -H 'Content-Type: application/json' -d "$PROMPT")
+          echo "RESPONSE: $resp"
+          echo "$resp" | python3 -c "import json,sys; d=json.load(sys.stdin); c=d.get('content',''); print('GENERATED:', repr(c)); assert c.strip(), 'empty generation'; print('OK tokens_predicted=', d.get('tokens_predicted'))"
+          echo '--- server.log tail ---'; tail -20 server.log
+
+  windows-arm64:
+    runs-on: windows-11-arm
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Download bundle + model
+        run: |
+          curl.exe -sSfL -o bundle.zip "https://github.com/unslothai/llama.cpp/releases/download/$env:REL/app-$env:REL-windows-arm64-cpu.zip"
+          Expand-Archive -Path bundle.zip -DestinationPath bundle -Force
+          curl.exe -sSfL -o model.gguf "$env:MODEL_URL"
+      - name: Version + generate
+        run: |
+          & bundle\llama-server.exe --version
+          if ($LASTEXITCODE -ne 0) { Write-Error "llama-server --version failed: $LASTEXITCODE"; exit 1 }
+          $p = Start-Process -FilePath bundle\llama-server.exe `
+            -ArgumentList '-m','model.gguf','--host','127.0.0.1','--port','8080','-t','4','-c','1024' `
+            -NoNewWindow -PassThru -RedirectStandardOutput server.out.log -RedirectStandardError server.err.log
+          $ok = $false
+          foreach ($i in 1..90) {
+            Start-Sleep -Seconds 2
+            if ($p.HasExited) { break }
+            try { if ((Invoke-WebRequest http://127.0.0.1:8080/health -UseBasicParsing -TimeoutSec 3).StatusCode -eq 200) { $ok = $true; break } } catch {}
+          }
+          if (-not $ok) {
+            Write-Host '--- server.err.log ---'; Get-Content server.err.log -ErrorAction SilentlyContinue
+            Write-Error 'server did not become healthy'; exit 1
+          }
+          $resp = Invoke-RestMethod -Uri http://127.0.0.1:8080/completion -Method Post -ContentType 'application/json' -Body $env:PROMPT
+          Write-Host "GENERATED:" $resp.content
+          if ([string]::IsNullOrWhiteSpace([string]$resp.content)) { Write-Error 'empty generation'; exit 1 }
+          Write-Host "OK tokens_predicted=" $resp.tokens_predicted
+          if (-not $p.HasExited) { $p.Kill() }
