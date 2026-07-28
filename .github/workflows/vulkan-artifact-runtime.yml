@@ -1,0 +1,272 @@
+name: Throwaway Vulkan artifact runtime
+
+on:
+  pull_request:
+    branches:
+      - vulkan-arm64-artifacts
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  SOURCE_RUN_ID: '30381289880'
+  MODEL_URL: https://huggingface.co/bartowski/SmolLM2-135M-Instruct-GGUF/resolve/main/SmolLM2-135M-Instruct-Q4_K_M.gguf?download=true
+  MODEL_SHA256: 2e8040ceae7815abe0dcb3540b9995eaa1fa0d2ca9e797d0a635ae4433c68c2d
+
+jobs:
+  linux:
+    name: linux/${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-22.04
+            artifact: app-b10158-linux-x64-vulkan
+          - arch: arm64
+            runner: ubuntu-22.04-arm
+            artifact: app-b10158-linux-arm64-vulkan
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download Vulkan artifact
+        uses: actions/download-artifact@v6
+        with:
+          name: ${{ matrix.artifact }}
+          path: artifact
+          github-token: ${{ github.token }}
+          repository: oobabooga/llama.cpp
+          run-id: ${{ env.SOURCE_RUN_ID }}
+
+      - name: Install software Vulkan runtime
+        run: |
+          set -eux
+          sudo apt-get update -y
+          sudo apt-get install -y \
+            build-essential curl jq libgomp1 libssl3 libvulkan-dev \
+            mesa-vulkan-drivers vulkan-tools
+
+      - name: Prepare bundle and software GPU shim
+        run: |
+          set -eux
+          mkdir bundle
+          tar -xzf "artifact/${{ matrix.artifact }}.tar.gz" -C bundle
+          cc -shared -fPIC .github/throwaway-ci/vk_fake_gpu.c \
+            -o "$RUNNER_TEMP/libvk_fake_gpu.so" -ldl
+          icd=$(find /usr/share/vulkan/icd.d -maxdepth 1 -name 'lvp_icd*.json' -print -quit)
+          test -n "$icd"
+          {
+            echo "VK_DRIVER_FILES=$icd"
+            echo "LD_PRELOAD=$RUNNER_TEMP/libvk_fake_gpu.so"
+          } >> "$GITHUB_ENV"
+
+      - name: Verify Vulkan device
+        working-directory: bundle
+        run: |
+          set -eux
+          ./llama-server --list-devices | tee "$RUNNER_TEMP/devices.txt"
+          grep -q 'Vulkan0: llvmpipe' "$RUNNER_TEMP/devices.txt"
+
+      - name: Download test model
+        run: |
+          set -eux
+          curl --http1.1 -fL --retry 5 --retry-all-errors \
+            "$MODEL_URL" -o "$RUNNER_TEMP/model.gguf"
+          echo "$MODEL_SHA256  $RUNNER_TEMP/model.gguf" | sha256sum -c -
+
+      - name: Run Vulkan chat completions
+        working-directory: bundle
+        run: |
+          set -euo pipefail
+          ./llama-server \
+            -m "$RUNNER_TEMP/model.gguf" \
+            -ngl 99 -c 256 -np 1 -lv 4 \
+            --host 127.0.0.1 --port 8080 \
+            >"$RUNNER_TEMP/server.log" 2>&1 &
+          server_pid=$!
+          cleanup() {
+            kill "$server_pid" 2>/dev/null || true
+            wait "$server_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          ready=false
+          for _ in $(seq 1 180); do
+            if curl -fsS http://127.0.0.1:8080/health >/dev/null 2>&1; then
+              ready=true
+              break
+            fi
+            sleep 1
+          done
+          test "$ready" = true
+
+          curl -fsS http://127.0.0.1:8080/v1/chat/completions \
+            -H 'Content-Type: application/json' \
+            -d '{"messages":[{"role":"user","content":"Name one primary color."}],"temperature":0,"max_tokens":16}' \
+            >"$RUNNER_TEMP/chat-1.json"
+          curl -fsS http://127.0.0.1:8080/v1/chat/completions \
+            -H 'Content-Type: application/json' \
+            -d '{"messages":[{"role":"user","content":"Say hello in one short sentence."}],"temperature":0,"max_tokens":16}' \
+            >"$RUNNER_TEMP/chat-2.json"
+
+          jq -e '.choices[0].message.content | type == "string" and length > 0' \
+            "$RUNNER_TEMP/chat-1.json" >/dev/null
+          jq -e '.choices[0].message.content | type == "string" and length > 0' \
+            "$RUNNER_TEMP/chat-2.json" >/dev/null
+
+          cleanup
+          trap - EXIT
+          grep -q 'offloaded 31/31 layers to GPU' "$RUNNER_TEMP/server.log"
+          grep -q 'Vulkan0 model buffer size' "$RUNNER_TEMP/server.log"
+          grep -q 'Vulkan0 KV buffer size' "$RUNNER_TEMP/server.log"
+          jq -r '.choices[0].message.content' "$RUNNER_TEMP/chat-1.json"
+          jq -r '.choices[0].message.content' "$RUNNER_TEMP/chat-2.json"
+          grep -E 'Vulkan0|offload|buffer size|print_timing' "$RUNNER_TEMP/server.log"
+
+  windows:
+    name: windows/x64
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download Vulkan artifact
+        uses: actions/download-artifact@v6
+        with:
+          name: app-b10158-windows-x64-vulkan
+          path: artifact
+          github-token: ${{ github.token }}
+          repository: oobabooga/llama.cpp
+          run-id: ${{ env.SOURCE_RUN_ID }}
+
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Prepare bundle and SwiftShader
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Expand-Archive artifact/app-b10158-windows-x64-vulkan.zip bundle
+
+          $roots = @(
+            "$env:ProgramFiles\Google\Chrome\Application",
+            "${env:ProgramFiles(x86)}\Google\Chrome\Application"
+          ) | Where-Object { Test-Path $_ }
+          $icd = Get-ChildItem $roots -Recurse -Filter vk_swiftshader_icd.json |
+            Select-Object -First 1
+          if (-not $icd) {
+            throw 'Chrome SwiftShader ICD was not found'
+          }
+          $icdConfig = Get-Content $icd.FullName | ConvertFrom-Json
+          $swiftShader = Join-Path $icd.Directory.FullName $icdConfig.ICD.library_path
+          $loader = Get-ChildItem $icd.Directory.FullName -Filter vulkan-1.dll |
+            Select-Object -First 1
+          if (-not $loader) {
+            $loader = Get-ChildItem $roots -Recurse -Filter vulkan-1.dll |
+              Select-Object -First 1
+          }
+          if (-not (Test-Path $swiftShader) -or -not $loader) {
+            throw 'Chrome SwiftShader runtime was incomplete'
+          }
+
+          Copy-Item $swiftShader bundle/vk_swiftshader.dll
+          Copy-Item $icd.FullName bundle/vk_swiftshader_icd.json
+          Copy-Item $loader.FullName bundle/vulkan-real.dll
+          cl /nologo /LD /O2 .github/throwaway-ci/vk_fake_gpu_windows.cpp `
+            /link /OUT:bundle/vulkan-1.dll
+          "VK_DRIVER_FILES=$env:GITHUB_WORKSPACE\bundle\vk_swiftshader_icd.json" |
+            Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Verify Vulkan device
+        shell: pwsh
+        working-directory: bundle
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $devices = & ./llama-server.exe --list-devices
+          $devices
+          if ($devices -notmatch 'Vulkan0.*SwiftShader') {
+            throw 'SwiftShader was not exposed as Vulkan0'
+          }
+
+      - name: Download test model
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          curl.exe --http1.1 -fL --retry 5 --retry-all-errors `
+            "$env:MODEL_URL" -o "$env:RUNNER_TEMP\model.gguf"
+          $actual = (Get-FileHash "$env:RUNNER_TEMP\model.gguf" -Algorithm SHA256).Hash.ToLower()
+          if ($actual -ne $env:MODEL_SHA256) {
+            throw "model checksum mismatch: $actual"
+          }
+
+      - name: Run Vulkan chat completions
+        shell: pwsh
+        working-directory: bundle
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $stdout = "$env:RUNNER_TEMP\server.out.log"
+          $stderr = "$env:RUNNER_TEMP\server.err.log"
+          $server = Start-Process `
+            -FilePath ./llama-server.exe `
+            -ArgumentList @(
+              '-m', "$env:RUNNER_TEMP\model.gguf",
+              '-ngl', '99', '-c', '256', '-np', '1', '-lv', '4',
+              '--host', '127.0.0.1', '--port', '8080'
+            ) `
+            -RedirectStandardOutput $stdout `
+            -RedirectStandardError $stderr `
+            -PassThru
+          try {
+            $ready = $false
+            for ($i = 0; $i -lt 180; $i++) {
+              try {
+                Invoke-RestMethod http://127.0.0.1:8080/health | Out-Null
+                $ready = $true
+                break
+              } catch {
+                Start-Sleep -Seconds 1
+              }
+            }
+            if (-not $ready) {
+              throw 'llama-server did not become healthy'
+            }
+
+            $prompts = @(
+              'Name one primary color.',
+              'Say hello in one short sentence.'
+            )
+            foreach ($prompt in $prompts) {
+              $body = @{
+                messages = @(@{ role = 'user'; content = $prompt })
+                temperature = 0
+                max_tokens = 16
+              } | ConvertTo-Json -Depth 4
+              $response = Invoke-RestMethod `
+                http://127.0.0.1:8080/v1/chat/completions `
+                -Method Post `
+                -ContentType 'application/json' `
+                -Body $body
+              $content = $response.choices[0].message.content
+              if (-not $content) {
+                throw 'chat completion was empty'
+              }
+              Write-Host $content
+            }
+          } finally {
+            Stop-Process -Id $server.Id -ErrorAction SilentlyContinue
+            Wait-Process -Id $server.Id -ErrorAction SilentlyContinue
+          }
+
+          $logs = (Get-Content $stdout, $stderr) -join "`n"
+          if ($logs -notmatch 'offloaded 31/31 layers to GPU') {
+            throw 'model layers were not offloaded'
+          }
+          if ($logs -notmatch 'Vulkan0 model buffer size') {
+            throw 'model buffer was not allocated on Vulkan0'
+          }
+          if ($logs -notmatch 'Vulkan0 KV buffer size') {
+            throw 'KV buffer was not allocated on Vulkan0'
+          }
+          $logs -split "`n" |
+            Select-String -Pattern 'Vulkan0|offload|buffer size|print_timing'
