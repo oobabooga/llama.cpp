@@ -181,6 +181,8 @@ jobs:
             Out-File -FilePath $env:GITHUB_ENV -Append
           "MESA_D3D12_DEFAULT_ADAPTER_NAME=Microsoft Basic Render Driver" |
             Out-File -FilePath $env:GITHUB_ENV -Append
+          "DZN_DEBUG=experimental" |
+            Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Verify Vulkan device
         shell: pwsh
