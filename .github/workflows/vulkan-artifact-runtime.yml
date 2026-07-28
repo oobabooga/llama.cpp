@@ -202,6 +202,7 @@ jobs:
           }
 
       - name: Run Vulkan chat completions
+        timeout-minutes: 30
         shell: pwsh
         working-directory: bundle
         run: |
@@ -213,6 +214,7 @@ jobs:
             -ArgumentList @(
               '-m', "$env:RUNNER_TEMP\model.gguf",
               '-ngl', '99', '-c', '256', '-np', '1', '-lv', '4',
+              '--no-warmup',
               '--host', '127.0.0.1', '--port', '8080'
             ) `
             -RedirectStandardOutput $stdout `
@@ -220,14 +222,17 @@ jobs:
             -PassThru
           try {
             $ready = $false
-            for ($i = 0; $i -lt 180; $i++) {
-              try {
-                Invoke-RestMethod http://127.0.0.1:8080/health | Out-Null
+            for ($i = 0; $i -lt 600; $i++) {
+              & curl.exe -fs --max-time 1 http://127.0.0.1:8080/health 2>$null |
+                Out-Null
+              if ($LASTEXITCODE -eq 0) {
                 $ready = $true
                 break
-              } catch {
-                Start-Sleep -Seconds 1
               }
+              if ($server.HasExited) {
+                throw 'llama-server exited before becoming healthy'
+              }
+              Start-Sleep -Seconds 1
             }
             if (-not $ready) {
               throw 'llama-server did not become healthy'
@@ -241,7 +246,7 @@ jobs:
               $body = @{
                 messages = @(@{ role = 'user'; content = $prompt })
                 temperature = 0
-                max_tokens = 16
+                max_tokens = 4
               } | ConvertTo-Json -Depth 4
               $response = Invoke-RestMethod `
                 http://127.0.0.1:8080/v1/chat/completions `
@@ -254,6 +259,9 @@ jobs:
               }
               Write-Host $content
             }
+          } catch {
+            Get-Content $stdout, $stderr -ErrorAction SilentlyContinue
+            throw
           } finally {
             Stop-Process -Id $server.Id -ErrorAction SilentlyContinue
             Wait-Process -Id $server.Id -ErrorAction SilentlyContinue
