@@ -215,7 +215,7 @@ jobs:
             -ArgumentList @(
               '-m', "$env:RUNNER_TEMP\model.gguf",
               '-ngl', '99', '-c', '256', '-np', '1', '-lv', '4',
-              '--no-warmup',
+              '-fit', 'off', '--no-warmup',
               '--host', '127.0.0.1', '--port', '8080'
             ) `
             -RedirectStandardOutput $stdout `
