@@ -185,7 +185,8 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $devices = & ./llama-server.exe --list-devices
           $devices
-          if ($devices -notmatch 'Vulkan0.*SwiftShader') {
+          $devicesText = $devices -join "`n"
+          if ($devicesText -notmatch 'Vulkan0.*SwiftShader') {
             throw 'SwiftShader was not exposed as Vulkan0'
           }
 
