@@ -158,10 +158,11 @@ jobs:
             throw "Mesa checksum mismatch: $mesaHash"
           }
           7z.exe x "$env:RUNNER_TEMP\mesa.7z" `
-            x64/vulkan_lvp.dll x64/lvp_icd.x86_64.json `
+            x64/vulkan_dzn.dll x64/dzn_icd.x86_64.json x64/dxil.dll `
             "-o$env:RUNNER_TEMP\mesa"
-          Copy-Item "$env:RUNNER_TEMP\mesa\x64\vulkan_lvp.dll" bundle
-          Copy-Item "$env:RUNNER_TEMP\mesa\x64\lvp_icd.x86_64.json" bundle
+          Copy-Item "$env:RUNNER_TEMP\mesa\x64\vulkan_dzn.dll" bundle
+          Copy-Item "$env:RUNNER_TEMP\mesa\x64\dzn_icd.x86_64.json" bundle
+          Copy-Item "$env:RUNNER_TEMP\mesa\x64\dxil.dll" bundle
 
           $roots = @(
             "$env:ProgramFiles\Google\Chrome\Application",
@@ -176,7 +177,9 @@ jobs:
           Copy-Item $loader.FullName bundle/vulkan-real.dll
           cl /nologo /LD /O2 .github/throwaway-ci/vk_fake_gpu_windows.cpp `
             /link /OUT:bundle/vulkan-1.dll
-          "VK_DRIVER_FILES=$env:GITHUB_WORKSPACE\bundle\lvp_icd.x86_64.json" |
+          "VK_DRIVER_FILES=$env:GITHUB_WORKSPACE\bundle\dzn_icd.x86_64.json" |
+            Out-File -FilePath $env:GITHUB_ENV -Append
+          "MESA_D3D12_DEFAULT_ADAPTER_NAME=Microsoft Basic Render Driver" |
             Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Verify Vulkan device
@@ -187,8 +190,8 @@ jobs:
           $devices = & ./llama-server.exe --list-devices
           $devices
           $devicesText = $devices -join "`n"
-          if ($devicesText -notmatch 'Vulkan0.*llvmpipe') {
-            throw 'Mesa LavaPipe was not exposed as Vulkan0'
+          if ($devicesText -notmatch 'Vulkan0') {
+            throw 'Mesa Dozen was not exposed as Vulkan0'
           }
 
       - name: Download test model
